@@ -9,6 +9,10 @@ TIME_STEP = 0.001
 
 class Motor(object):
 
+    @property
+    def resistance(self):
+        return self._R
+
     def __init__(self, l: float, m: float, r: float):
         """
         Sets up the BLDC motor using the input parameters

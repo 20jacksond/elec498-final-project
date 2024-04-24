@@ -158,9 +158,9 @@ class FOC(object):
         Output:
             motor_voltages - np.ndarray representign the voltage outputs for each motor phase
         """
-        u_duty = duty_cycles[0]
-        v_duty = duty_cycles[1]
-        w_duty = duty_cycles[2]
+        u_duty = duty_cycles[0, 0]
+        v_duty = duty_cycles[0, 1]
+        w_duty = duty_cycles[0, 2]
 
         motor_voltages = np.zeros((3, 100))
 
@@ -183,61 +183,62 @@ class FOC(object):
         theta = 0
         return omega, theta
     
-    def control_loop(self, motor: motor.Motor, target_speed: float, sim_time: float) -> float:
+    def control_loop(self, 
+                     motor: motor.Motor, 
+                     target_speed: float,
+                     i_q_prev: float,
+                     i_d_prev: float,
+                     rotor_pos: float,
+                     rotor_speed: float) -> tuple[float]:
         """
         This function completes the full FOC control loop using the Motor object.
         Input:
             motor - the Motor object for simulation
             target_speed - float representing the desired speed to control the motor to
-            sim_time - float representing simulation time in seconds
+            i_q_prev - float representing a feedback signal
+            i_d_prev - float representing a feedback signal
+            rotor_pos - float representing the angular position of the motor, relative to a stationary frame
+            rotor_speed - the current rotor position minus the previous divided by the time step
         Output:
-            torque - the float mechanical torque output from the motor to drive the robot dynamics.
-        """
-        # initialize all previous feedback signals at 0
-        i_alpha_prev = 0
-        i_beta_prev = 0
-        i_q_prev = 0
-        i_d_prev = 0
-
-        # first, determine the actual speed of the motor using the sensorless sense
-        actual_speed, actual_pos = self.sensorless_sense(0, 0) # TODO figure out how to initialize everything
-
-        # run the control loop for the duration of the simulation
-        # TODO - determine if we want to do this in real time or produce a control torque list
-        for t in sim_time:
-            # get the q current
-            i_q = self.pi_regulator(target_speed, actual_speed)
-
-            # get the d and q voltages
-            v_d = self.pi_regulator(0, i_d_prev)
-            v_q = self.pi_regulator(i_q, i_q_prev)
-
-            # perform the inverse Park transform
-            v_a_B = self.inv_park(actual_pos, np.array([v_d, v_q]).T)
-
-            # perform the inverse Clark transform to find the phase voltages
-            v_uvw = self.inv_clarke(v_a_B)
-
-            # TODO Where does the inverted come into this???
-            duty_cycles = np.zeros((3, 1))
-
-            i_uvw = self.inverter(duty_cycles)
-
-            # calculate the new speed and position
-            new_speed, new_pos = self.sensorless_sense(0, 0) # TODO figure out correct inputs
-
-            bemf = np.zeros(3, 1) # TODO
-
-            torque = motor.output_torque(i_uvw, bemf) # this is the important part. return torque to run RR robot sim
-
-            # perform the Clark transform
-            i_a_B = self.clarke(i_uvw)
-
-            # perform the Park transform
-            i_d_q = self.park(new_pos, i_a_B)
-
-            # set the new reference currents
-            i_d_prev = i_d_q[0, 0]
-            i_q_prev = i_d_q[1, 0]
+            a list containing the new motor speed, new position, new i_q_prev, and new i_d_prev
             
-            # continue the loop
+        NOTE This structure follow the diagram shown in https://www.ti.com/lit/ml/slyp711/slyp711.pdf?ts=1713049008776&ref_url=https%253A%252F%252Fwww.ecosia.org%252F
+        with edits from https://www.ti.com/lit/an/bpra073/bpra073.pdf 
+        """
+
+        # run the control loop
+        # get the q current
+        i_q = self.pi_regulator(target_speed, rotor_speed)
+
+        # get the d and q voltages
+        v_d = self.pi_regulator(0, i_d_prev)
+        v_q = self.pi_regulator(i_q, i_q_prev)
+
+        # perform the inverse Park transform
+        v_a_B = self.inv_park(rotor_pos, np.array([v_d, v_q]).T)
+
+        # space vector PWM
+        duty_cycles = self.svpwm(v_a_B[0, 0], v_a_B[1, 0])
+
+        # calculate phase currents
+        v_uvw = self.inverter(duty_cycles)
+        bemf = motor.calculate_bemf()
+
+        v_diff = v_uvw - bemf
+
+        i_uvw = v_diff / motor.resistance
+
+        # TODO get information from the motor
+
+        # calculate the new speed of the motor
+        new_speed, new_pos = self.sensorless_sense(0, 0) 
+
+        # use the current in the feedback portion of the loop
+        i_a_B = self.clarke(i_uvw)
+
+        # calculate the new torque control signals
+        new_torque_control = self.park(new_pos, i_a_B)
+
+        # return all the important values
+        # return array is [speed, position, i_q_prev, i_d_prev]
+        return [new_speed, new_pos, new_torque_control[0, 0], new_torque_control[1, 0]]
