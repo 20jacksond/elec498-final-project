@@ -5,7 +5,7 @@ Describing the motor physics in detail.
 import numpy as np
 
 # defining a few constants
-TIME_STEP = 0.001
+TIME_STEP = 0.01
 
 class Motor(object):
 
@@ -57,13 +57,17 @@ class Motor(object):
         """
         self.Theta_r_prev = self.Theta_r
 
-        # use the bemf and magnetic flux of the u phase coil (absolute 0 for the rotor)
-        sin = bemf[0] / (self._N * self._B * self._A * self.speed_m)
-        cos = np.sqrt(1 - (sin**2))
+        if self.speed_m != 0:
+            # use the bemf and magnetic flux of the u phase coil (absolute 0 for the rotor)
+            sin = bemf[0] / (self._N * self._B * self._A * self.speed_m)
+            cos = np.sqrt(1 - (sin**2))
 
-        # use atan2 to make sure we get the correct angle
-        option1 = np.arctan2(sin, cos)
-        option2 = np.arctan2(sin, -cos)
+            # use atan2 to make sure we get the correct angle
+            option1 = np.arctan2(sin, cos)
+            option2 = np.arctan2(sin, -cos)
+        else:
+            option1 = 0
+            option2 = 0
 
         # choose the resulting angle closest to the previous angle
         if abs(option1 - self.Theta_r_prev) <= abs(option2 - self.Theta_r_prev):
@@ -103,6 +107,10 @@ class Motor(object):
         Output:
             torque - float representing the output torque of the motor
         """
-        torque = (60 * self._W) / (2 * np.pi * self.speed_m)
+        # only produces torque if the speed isn't zero
+        if self.speed_m != 0:
+            torque = (60 * self._W) / (2 * np.pi * self.speed_m)
+        else:
+            torque = 0
 
         return torque

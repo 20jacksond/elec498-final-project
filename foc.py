@@ -25,7 +25,8 @@ class FOC(object):
                              [12*np.cos(240), 12*np.sin(240)]])
         self.T = motor.TIME_STEP
         
-        self.error = 0
+        self.error = 0.0
+        self.error_vec = np.array([0.0, 0.0, 0.0])
 
     def park(self, theta: float, alpha_beta: np.ndarray) -> np.ndarray:
         """
@@ -38,8 +39,8 @@ class FOC(object):
             d_q - np.ndarray representing the (d, q) vector
         """
         # internally correct the size of the alpha_beta vector
-        alpha_beta = np.array([[alpha_beta[0, 0]],
-                               [alpha_beta[1, 0]],
+        alpha_beta = np.array([[alpha_beta[0]],
+                               [alpha_beta[1]],
                                [0]])
         
         P = np.array([[np.cos(theta), np.sin(theta), 0],
@@ -118,7 +119,10 @@ class FOC(object):
         error = y_ref - y_fbk
 
         # sum the previous errors
-        self.error += error
+        if type(error) == float:
+            self.error += error
+        else:
+            self.error_vec += error
 
         # calculate the output
         u_k = (K_P * error) + (K_I * error) + self.error
@@ -142,8 +146,8 @@ class FOC(object):
         B1 = self.PWM[:2, :].T
         B2 = self.PWM[1:3, :].T
         
-        coords1 = np.linalg.inv(B1) * vector
-        coords2 = np.linalg.inv(B2) * vector
+        coords1 = np.linalg.inv(B1) @ vector
+        coords2 = np.linalg.inv(B2) @ vector
 
         # normalized to a 12V reference
         u_coords = coords1[0] / 12
@@ -155,7 +159,7 @@ class FOC(object):
         v_duty = self.T * (1 - v_coords)
         w_duty = self.T * (1 - w_coords)
 
-        return np.array([u_duty, v_duty, w_duty]) #TODO fix this
+        return np.array([u_duty, v_duty, w_duty])
     
     def inverter(self, duty_cycles: np.ndarray) -> np.ndarray:
         """
@@ -165,23 +169,25 @@ class FOC(object):
         Output:
             motor_voltages - np.ndarray representign the voltage outputs for each motor phase
         """
-        u_duty = duty_cycles[0, 0]
-        v_duty = duty_cycles[0, 1]
-        w_duty = duty_cycles[0, 2]
+        u_duty = duty_cycles[0]
+        v_duty = duty_cycles[1]
+        w_duty = duty_cycles[2]
 
         motor_voltages = np.zeros((3, 100))
 
         # create a time serires to stack every period
         time = np.linspace(0, self.T, num=100)
+        index = 0
 
         # set the values to be on or off
         for i in time:
             if (i >= (self.T/2 - u_duty)) or (i <= (self.T/2 + u_duty)):
-                motor_voltages[0, i] = self.VDC
+                motor_voltages[0, index] = self.VDC
             if (i >= (self.T/2 - v_duty)) or (i <= (self.T/2 + v_duty)):
-                motor_voltages[1, i] = self.VDC
+                motor_voltages[1, index] = self.VDC
             if (i >= (self.T/2 - w_duty)) or (i <= (self.T/2 + w_duty)):
-                motor_voltages[2, i] = self.VDC
+                motor_voltages[2, index] = self.VDC
+            index += 1
 
         return motor_voltages
 
@@ -252,9 +258,9 @@ class FOC(object):
         duty_cycles = self.svpwm(v_a_B[0, 0], v_a_B[1, 0])
 
         # calculate phase currents
-        v_uvw = np.array(np.average(self.inverter(duty_cycles)[0, :]),
-                         np.average(self.inverter(duty_cycles)[1, :]),
-                         np.average(self.inverter(duty_cycles)[2, :]))
+        v_uvw = np.array([np.average(self.inverter(duty_cycles)[0, :]),
+                          np.average(self.inverter(duty_cycles)[1, :]),
+                          np.average(self.inverter(duty_cycles)[2, :])])
         
         bemf = motor.calculate_bemf()
 
@@ -262,8 +268,9 @@ class FOC(object):
 
         i_uvw = v_diff / motor.resistance
 
-        # calculate the new speed of the motor
-        new_speed, new_pos = self.sensorless_sense(motor, v_uvw, bemf, i_uvw) 
+        # get the new position and speed info from the motor
+        new_pos = self.sensorless_sense(motor, v_uvw, bemf, i_uvw)
+        new_speed = motor.speed
 
         # use the current in the feedback portion of the loop
         i_a_B = self.clarke(i_uvw)
