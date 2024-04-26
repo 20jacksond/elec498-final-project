@@ -7,7 +7,8 @@ from copy import deepcopy
 
 from robot_components import Link, Joint
 import general_utility as general
-
+from motor import Motor
+from foc import FOC
 
 def trapazoid_calc(prev_value: float, prev_der: float, new_der: float,
                    timestep: float) -> float:
@@ -302,7 +303,7 @@ class RRBot(object):
     # calculate the kinetic energy first
     pass
 
-  def simulate_rr(self) -> None:
+  def simulate_rr(self, motor1: Motor, motor2: Motor, foc1: FOC, foc2: FOC) -> None:
     """Simulate the RR robot
 
     TODO 
@@ -364,21 +365,22 @@ class RRBot(object):
       #yapf: enable
 
       # find the torque vector to apply to the robot. gravity is included on the second joint
-      tau = np.array([[-self._kp1 * (theta_1 - self._joint_1_des) - self._kv1 * theta_1_dot],
+      target_torque = np.array([[-self._kp1 * (theta_1 - self._joint_1_des) - self._kv1 * theta_1_dot],
                       [-self._kp2 * (theta_2 - self._joint_2_des) - self._kv2 * theta_2_dot - G[1, 0]]])
       
-      # cap the magnitude of the torque values at 20
-    #   if tau[0, 0] > 40:
-    #     tau[0, 0] = 40
-    #   elif tau[0, 0] < -40:
-    #     tau[0, 0] = -40
-    #   if tau[1, 0] > 40:
-    #     tau[1, 0] = 40
-    #   elif tau[1, 0] < -40:
-    #     tau[1, 0] = -40
+      # use the motor and FOC objects to return the desired torque
+      # TODO turn target_speed into target_torque ()
+      speed1, pos1, new_i_q1, new_i_d1 = foc1.control_loop(motor1, target_torque[0, 0], i_q_prev1, i_d_prev1, pos1, speed1)
+      actual_torque1 = motor1.output_torque()
+
+      speed2, pos2, new_i_q2, new_i_d2 = foc2.control_loop(motor2, target_torque[1, 0], i_q_prev2, i_d_prev2, pos2, speed2)
+      actual_torque2 = motor2.output_torque()
+
+      actual_torque = np.array([[actual_torque1],
+                                [actual_torque2]])
       
       # calculate theta 1 double dot and theta 2 double dot using the equation tau = M(THETA..) + C + G
-      t_double_dot = np.linalg.inv(M) @ (tau - C - G)
+      t_double_dot = np.linalg.inv(M) @ (actual_torque - C - G)
 
       # Trapezoidal calc 
       if index >= 0:

@@ -14,7 +14,7 @@ import motor
 
 class FOC(object):
 
-    def __init__(self, motor_params) -> None:
+    def __init__(self) -> None:
         self.VDC = 12
         self.C = np.sqrt(2/3) * np.array([[1, -1/2, -1/2],
                                      [0, np.sqrt(3)/2, -np.sqrt(3)/2],
@@ -25,7 +25,7 @@ class FOC(object):
                              [12*np.cos(240), 12*np.sin(240)]])
         self.T = motor.TIME_STEP
         
-        self.error_series = []
+        self.error = 0
 
     def park(self, theta: float, alpha_beta: np.ndarray) -> np.ndarray:
         """
@@ -37,6 +37,11 @@ class FOC(object):
         Output:
             d_q - np.ndarray representing the (d, q) vector
         """
+        # internally correct the size of the alpha_beta vector
+        alpha_beta = np.array([[alpha_beta[0, 0]],
+                               [alpha_beta[1, 0]],
+                               [0]])
+        
         P = np.array([[np.cos(theta), np.sin(theta), 0],
                       [-np.sin(theta), np.cos(theta), 0],
                       [0, 0, 1]])
@@ -55,6 +60,11 @@ class FOC(object):
             alpha_beta - np.ndarray representing the (alpha, beta) vector
             NOTE alpha_beta is a vector with three elements, but the third = 0
         """
+        # internally correct the size of the d_q vector
+        d_q = np.array([[d_q[0, 0]],
+                        [d_q[1, 0]],
+                        [0]])
+        
         P = np.array([[np.cos(theta), np.sin(theta), 0],
                       [-np.sin(theta), np.cos(theta), 0],
                       [0, 0, 1]])
@@ -108,13 +118,10 @@ class FOC(object):
         error = y_ref - y_fbk
 
         # sum the previous errors
-        sum = self.error_series.sum()
+        self.error += error
 
         # calculate the output
-        u_k = (K_P * error) + (K_I * error) + sum
-
-        # add the error to the time series
-        self.error_series.append(error)
+        u_k = (K_P * error) + (K_I * error) + self.error
 
         return u_k
 
@@ -148,7 +155,7 @@ class FOC(object):
         v_duty = self.T * (1 - v_coords)
         w_duty = self.T * (1 - w_coords)
 
-        return np.array([u_duty, v_duty, w_duty])
+        return np.array([u_duty, v_duty, w_duty]) #TODO fix this
     
     def inverter(self, duty_cycles: np.ndarray) -> np.ndarray:
         """
@@ -178,10 +185,34 @@ class FOC(object):
 
         return motor_voltages
 
-    def sensorless_sense(self, i_alpha: np.ndarray, i_beta: np.ndarray) -> tuple:
-        omega = 0
-        theta = 0
-        return omega, theta
+    def sensorless_sense(self, motor: motor.Motor, 
+                         phase_voltages: np.ndarray, 
+                         prev_bemf: np.ndarray,
+                         actual_current: np.ndarray) -> float:
+        """
+        Calculates the position of the rotor in order to use the Park transform.
+        Inputs:
+            motor - Model object model
+            phase_voltages - np.ndarray of phase voltages
+            prev_bemf - np.ndarray of previously measured back-emf feedback
+            actual_current - np.ndarray of the actual phase currents
+        Output:
+            omega - float representing the position of the rotor
+        """
+        # follow the control loop outlined in https://www.youtube.com/watch?v=cdiZUszYLiA
+        observed_current = (phase_voltages - prev_bemf) / motor.resistance
+
+        # calculate the new back emf
+        new_bemf = -self.pi_regulator(actual_current, observed_current)
+
+        # update the position of the motor
+        # this is done here because it's needed to find the position
+        motor.update_position(new_bemf)
+
+        # determine the position
+        omega = motor.position
+
+        return omega
     
     def control_loop(self, 
                      motor: motor.Motor, 
@@ -215,23 +246,24 @@ class FOC(object):
         v_q = self.pi_regulator(i_q, i_q_prev)
 
         # perform the inverse Park transform
-        v_a_B = self.inv_park(rotor_pos, np.array([v_d, v_q]).T)
+        v_a_B = self.inv_park(rotor_pos, np.array([[v_d], [v_q]]))
 
         # space vector PWM
         duty_cycles = self.svpwm(v_a_B[0, 0], v_a_B[1, 0])
 
         # calculate phase currents
-        v_uvw = self.inverter(duty_cycles)
+        v_uvw = np.array(np.average(self.inverter(duty_cycles)[0, :]),
+                         np.average(self.inverter(duty_cycles)[1, :]),
+                         np.average(self.inverter(duty_cycles)[2, :]))
+        
         bemf = motor.calculate_bemf()
 
         v_diff = v_uvw - bemf
 
         i_uvw = v_diff / motor.resistance
 
-        # TODO get information from the motor
-
         # calculate the new speed of the motor
-        new_speed, new_pos = self.sensorless_sense(0, 0) 
+        new_speed, new_pos = self.sensorless_sense(motor, v_uvw, bemf, i_uvw) 
 
         # use the current in the feedback portion of the loop
         i_a_B = self.clarke(i_uvw)
