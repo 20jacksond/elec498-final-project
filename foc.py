@@ -10,7 +10,7 @@ Clarke and Park Transforms: https://en.wikipedia.org/wiki/Direct-quadrature-zero
 import numpy as np
 import matplotlib as plt
 import math
-import motor
+import motor as mot
 
 class FOC(object):
 
@@ -23,7 +23,7 @@ class FOC(object):
         self.PWM = np.array([[12*np.cos(0), 12*np.sin(0)],
                              [12*np.cos(120), 12*np.sin(120)],
                              [12*np.cos(240), 12*np.sin(240)]])
-        self.T = motor.TIME_STEP
+        self.T = mot.TIME_STEP
         
         self.error = 0.0
         self.error_vec = np.array([0.0, 0.0, 0.0])
@@ -119,13 +119,35 @@ class FOC(object):
         error = y_ref - y_fbk
 
         # sum the previous errors
-        if type(error) == float:
-            self.error += error
-        else:
-            self.error_vec += error
+        self.error += error
 
         # calculate the output
         u_k = (K_P * error) + (K_I * error) + self.error
+
+        return u_k
+    
+    def pi_regulator_vec(self, y_ref: np.ndarray, y_fbk: np.ndarray) -> np.ndarray:
+        """
+        Performs a PI control loop regulation of signals.
+        Inputs:
+            y_ref - float representing the reference signal at time t
+            y_fbk - float representing the feedback signal at time t
+            error - numpy array representing the error over time
+        Output:
+            u_k - float representing the control output at time t
+        """
+        # define control gains
+        K_P = 10
+        K_I = 0.4
+
+        # compute the error between reference and feedback
+        error = y_ref - y_fbk
+
+        # sum the previous errors
+        self.error_vec += error
+
+        # calculate the output
+        u_k = (K_P * error) + (K_I * error) + self.error_vec
 
         return u_k
 
@@ -191,7 +213,7 @@ class FOC(object):
 
         return motor_voltages
 
-    def sensorless_sense(self, motor: motor.Motor, 
+    def sensorless_sense(self, motor: mot.Motor, 
                          phase_voltages: np.ndarray, 
                          prev_bemf: np.ndarray,
                          actual_current: np.ndarray) -> float:
@@ -206,10 +228,12 @@ class FOC(object):
             omega - float representing the position of the rotor
         """
         # follow the control loop outlined in https://www.youtube.com/watch?v=cdiZUszYLiA
-        observed_current = (phase_voltages - prev_bemf) / motor.resistance
+        observed_current = ((phase_voltages - prev_bemf) / motor.resistance) * (1 - np.exp(-5))
 
         # calculate the new back emf
-        new_bemf = -self.pi_regulator(actual_current, observed_current)
+        new_bemf = -self.pi_regulator_vec(actual_current, observed_current)
+
+        print('b', new_bemf)
 
         # update the position of the motor
         # this is done here because it's needed to find the position
@@ -220,8 +244,43 @@ class FOC(object):
 
         return omega
     
+    def align(self, motor: mot.Motor) -> tuple[float]:
+        """
+        Calls the initialize() method on the motor object to startup the motor before entering the main loop
+
+        Note that this assumes the rotor starts in the zero position
+        """
+
+        # calculate the duty cycles such that only phase two is on
+        duty_cycles = self.svpwm(12*np.cos(120), 12*np.sin(120))
+
+        # calculate phase currents
+        v_uvw = np.array([np.average(self.inverter(duty_cycles)[0, :]),
+                          np.average(self.inverter(duty_cycles)[1, :]),
+                          np.average(self.inverter(duty_cycles)[2, :])])
+        
+        # run through many of the same calculations as the main loop in order to update feedback signals
+        bemf = motor.calculate_bemf()
+
+        v_diff = v_uvw - bemf
+
+        i_uvw = v_diff / motor.resistance
+
+        motor.initialize()
+
+        new_pos = motor.position
+        new_speed = motor.speed
+
+        # use the current in the feedback portion of the loop
+        i_a_B = self.clarke(i_uvw)
+
+        # calculate the new torque control signals
+        new_torque_control = self.park(new_pos, i_a_B)
+
+        return [new_speed, new_pos, new_torque_control[0, 0], new_torque_control[1, 0]]
+
     def control_loop(self, 
-                     motor: motor.Motor, 
+                     motor: mot.Motor, 
                      target_speed: float,
                      i_q_prev: float,
                      i_d_prev: float,

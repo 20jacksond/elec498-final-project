@@ -35,6 +35,9 @@ if __name__=="__main__":
     current_speed = 0.0
     current_pos = 0.0
 
+    # initialize the motor
+    current_speed, current_pos, i_q_prev, i_d_prev = foc.align(motor)
+
     for t in range(int(10/mot.TIME_STEP)):
         # print(f"Time: {time[t]}")
 
@@ -42,6 +45,8 @@ if __name__=="__main__":
 
         current_speed = speed[t]
         current_pos = pos
+
+        print("c", current_pos)
 
         torque[t] = motor.output_torque()
 
