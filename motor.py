@@ -55,7 +55,7 @@ class Motor(object):
 
         Note that it is only currently implemented for when the rotor is in the zero position
         """
-        torque = self._Radius * ((self._B**2) * self._A) / (2*4*np.pi*(10**(-7))) # with assumptions on the force
+        torque = self._Radius * np.sin(60) * ((self._B**2) * self._A) / (2*4*np.pi*(10**(-7))) # with assumptions on the force
 
         # let the rotation inertia of the rotor be equal to 0.1
         # only apply the torque for one time step

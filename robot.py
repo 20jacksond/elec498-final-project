@@ -303,7 +303,7 @@ class RRBot(object):
     # calculate the kinetic energy first
     pass
 
-  def simulate_rr(self, motor1: Motor, motor2: Motor, foc1: FOC, foc2: FOC) -> None:
+  def simulate_rr(self) -> None:
     """Simulate the RR robot
 
     TODO 
@@ -344,7 +344,6 @@ class RRBot(object):
     time_series_theta_2 = []
 
     for t in timesteps:
-      print('step {}'.format(t))
       prev_joint_states = deepcopy(curr_joint_states)
 
       # collect the variables we will need
@@ -370,17 +369,17 @@ class RRBot(object):
       
       # use the motor and FOC objects to return the desired torque
       # TODO turn target_speed into target_torque ()
-      speed1, pos1, new_i_q1, new_i_d1 = foc1.control_loop(motor1, target_torque[0, 0], i_q_prev1, i_d_prev1, pos1, speed1)
-      actual_torque1 = motor1.output_torque()
+      # speed1, pos1, new_i_q1, new_i_d1 = foc1.control_loop(motor1, target_torque[0, 0], i_q_prev1, i_d_prev1, pos1, speed1)
+      # actual_torque1 = motor1.output_torque()
 
-      speed2, pos2, new_i_q2, new_i_d2 = foc2.control_loop(motor2, target_torque[1, 0], i_q_prev2, i_d_prev2, pos2, speed2)
-      actual_torque2 = motor2.output_torque()
+      # speed2, pos2, new_i_q2, new_i_d2 = foc2.control_loop(motor2, target_torque[1, 0], i_q_prev2, i_d_prev2, pos2, speed2)
+      # actual_torque2 = motor2.output_torque()
 
-      actual_torque = np.array([[actual_torque1],
-                                [actual_torque2]])
+      # actual_torque = np.array([[actual_torque1],
+      #                           [actual_torque2]])
       
       # calculate theta 1 double dot and theta 2 double dot using the equation tau = M(THETA..) + C + G
-      t_double_dot = np.linalg.inv(M) @ (actual_torque - C - G)
+      t_double_dot = np.linalg.inv(M) @ (target_torque - C - G)
 
       # Trapezoidal calc 
       if index >= 0:
@@ -405,6 +404,7 @@ class RRBot(object):
 
     # plot the values of theta 1 and theta 2 over time
     fig, ax = plt.subplots()
-    ax.plot(timesteps, time_series_theta_1)
-    ax.plot(timesteps, time_series_theta_2)
+    ax.plot(timesteps, time_series_theta_1, label='Theta 1')
+    ax.plot(timesteps, time_series_theta_2, label='Theta 2')
+    plt.legend()
     plt.show()
