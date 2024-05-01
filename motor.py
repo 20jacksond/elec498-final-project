@@ -79,7 +79,7 @@ class Motor(object):
         """
         Calculate the mechanical speed of the motor.
         """
-        self.speed_m = (self.Theta_r_prev - self.Theta_r) / (self._P * TIME_STEP)
+        self.speed_m = (self.Theta_r_prev - self.Theta_r) / (TIME_STEP)
 
     def calculate_bemf(self) -> np.ndarray:
         """

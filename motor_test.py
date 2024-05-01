@@ -22,8 +22,8 @@ if __name__=="__main__":
     DESIRED_SPEED = 100.0 # Hz
 
     # initialize the variables
-    pos = 0.0
-    speed = 0.0
+    pos = np.pi/3
+    speed = 10.0
     i_q_prev = 0.0
     i_d_prev = 0.0
 
